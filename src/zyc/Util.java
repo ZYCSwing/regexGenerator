@@ -9,7 +9,7 @@ public class Util {
         State s = new State();
         Set<State> F = new HashSet<>();
         Set<String> alphabet = new HashSet<>();
-        Map<State, Map<State, String>> edges = new HashMap<>();
+        Map<State, Map<State, Set<String>>> edges = new HashMap<>();
 
         Map<TrieNode, State> map = new HashMap<>();
 
@@ -22,6 +22,7 @@ public class Util {
             State from = map.get(cur);
             edges.put(from, new HashMap<>());
 
+            assert cur != null;
             for (Map.Entry entry : cur.next.entrySet()) {
                 String edge = (String) entry.getKey();
                 TrieNode child = (TrieNode) entry.getValue();
@@ -32,7 +33,7 @@ public class Util {
                 if (child.isEnd) {
                     F.add(st);
                 }
-                edges.get(from).put(st, edge);
+                edges.get(from).put(st, new HashSet<>(Collections.singletonList(edge)));
                 que.offer(child);
             }
         }

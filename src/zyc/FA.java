@@ -1,5 +1,7 @@
 package zyc;
 
+import com.sun.deploy.util.StringUtils;
+
 import java.util.*;
 
 public class FA {
@@ -8,32 +10,45 @@ public class FA {
     private Set<State> F;
     private Set<String> alphabet;
     // self circle will be put into selfCircle map
-    private Map<State, Map<State, String>> edges;
+    private Map<State, Map<State, Set<String>>> edges;
     // save all states that reads a certain input and jump to a certain state
-    private Map<State, Map<String, Set<State>>> reverseMap = new HashMap<>();
+    private Map<State, Map<String, Set<State>>> reverseMap;
 
     private boolean min = false;
     private boolean gen = false;
     private String regEx;
 
-    private Map<State, String> selfCircle = new HashMap<>();
-    private Map<State, Map<State, String>> e;
+    private Map<State, Set<String>> selfCircle = new HashMap<>();
 
-    public FA(Set<State> K, State s, Set<State> F, Set<String> alphabet, Map<State, Map<State, String>> edges) {
+    public FA(Set<State> K, State s, Set<State> F, Set<String> alphabet, Map<State, Map<State, Set<String>>> e) {
         this.K = K;
         this.s = s;
         this.F = F;
         this.alphabet = alphabet;
-        this.edges = edges;
-        reverseMap = genReverseMap(edges);
+        edges = new HashMap<>();
+        e.forEach((from, map) -> map.forEach((to, paths) -> {
+            if (from == to) {
+                if (!selfCircle.containsKey(from)) {
+                    selfCircle.put(from, new HashSet<>());
+                }
+                selfCircle.get(from).addAll(paths);
+            } else {
+                if (!edges.containsKey(from)) {
+                    edges.put(from, new HashMap<>());
+                }
+                edges.get(from).putAll(e.get(from));
+            }
+        }));
+        reverseMap = genReverseMap(e);
     }
 
     private void minimize() {
-        if (min) return;
+        if (min) {
+            return;
+        }
         Set<Set<State>> P = new HashSet<>();
         Set<Set<State>> W = new HashSet<>();
-        Set<State> tmp = new HashSet<>();
-        tmp.addAll(K);
+        Set<State> tmp = new HashSet<>(K);
         tmp.removeAll(F);
         P.add(tmp);
         P.add(F);
@@ -51,7 +66,9 @@ public class FA {
                 }
 
                 // can't refine
-                if (X.isEmpty() || X.size() == K.size()) continue;
+                if (X.isEmpty() || X.size() == K.size()) {
+                    continue;
+                }
 
                 Set<Set<State>> newP = new HashSet<>();
                 for (Set<State> Y : P) {
@@ -86,9 +103,7 @@ public class FA {
             }
         }
 
-        Map<State, Set<State>> originStateToGroup = new HashMap<>();
-        Map<Set<State>, State> groupToNewState = new HashMap<>();
-
+        Map<State, State> mapToNewState = new HashMap<>();
 
         // new full set of states
         Set<State> newK;
@@ -97,43 +112,40 @@ public class FA {
         // new end states
         Set<State> newF = new HashSet<>();
         // new edges
-        Map<State, Map<State, String>> newEdges = new HashMap<>();
+        Map<State, Map<State, Set<String>>> newEdges = new HashMap<>();
 
         for (Set<State> part : P) {
+            State newState = new State();
             for (State st : part) {
-                originStateToGroup.put(st, part);
+                mapToNewState.put(st, newState);
             }
-            groupToNewState.put(part, new State());
         }
 
-        newK = new HashSet<>(groupToNewState.values());
-        newS = groupToNewState.get(originStateToGroup.get(s));
+        newK = new HashSet<>(mapToNewState.values());
+        newS = mapToNewState.get(s);
         for (State st : F) {
-            newF.add(groupToNewState.get(originStateToGroup.get(st)));
+            newF.add(mapToNewState.get(st));
         }
 
-        for (State st : K) {
-            State from = groupToNewState.get(originStateToGroup.get(st));
+        edges.forEach((originFrom, value) -> value.forEach((originTo, paths) -> {
+            State from = mapToNewState.get(originFrom);
+            State to = mapToNewState.get(originTo);
+
             if (!newEdges.containsKey(from)) {
                 newEdges.put(from, new HashMap<>());
             }
-            for (State originTo : edges.get(st).keySet()) {
-                State to = groupToNewState.get(originStateToGroup.get(originTo));
-                if (newEdges.get(from).containsKey(to)) {
-                    if (!newEdges.get(from).get(to).equals(edges.get(st).get(originTo))) {
-                        newEdges.get(from).put(to, newEdges.get(from).get(to) + "|" + edges.get(st).get(originTo));
-                    }
-                } else {
-                    newEdges.get(from).put(to, edges.get(st).get(originTo));
-                }
+
+            if (!newEdges.get(from).containsKey(to)) {
+                newEdges.get(from).put(to, new HashSet<>());
             }
-        }
+
+            newEdges.get(from).get(to).addAll(paths);
+        }));
 
         K = newK;
         s = newS;
         F = newF;
         edges = newEdges;
-        reverseMap = genReverseMap(edges);
 
         min = true;
     }
@@ -145,27 +157,28 @@ public class FA {
         // add new start state and end state, and relevant edges
         State newS = new State();
         State newF = new State();
-        Map<State, String> startMap = new HashMap<>();
-        startMap.put(s, "");
+        Map<State, Set<String>> startMap = new HashMap<>();
+        startMap.put(s, new HashSet<>(Collections.singletonList("")));
         edges.put(newS, startMap);
         for (State state : F) {
-            edges.get(state).put(newF, "");
+            if (!edges.containsKey(state)) {
+                edges.put(state, new HashMap<>());
+            }
+            edges.get(state).put(newF, new HashSet<>(Collections.singletonList("")));
         }
 
         Map<State, Integer> inDegree = new HashMap<>();
         Map<State, Integer> outDegree = new HashMap<>();
 
-        for (Map.Entry<State, Map<State, String>> entry : edges.entrySet()) {
-            State from = entry.getKey();
-            (entry.getValue()).forEach((to, edge) -> {
-                outDegree.put(from, outDegree.getOrDefault(from, 0) + 1);
-                inDegree.put(to, inDegree.getOrDefault(to, 0) + 1);
-            });
-        }
+        edges.forEach((from, value) -> (value).forEach((to, edges) -> {
+            outDegree.put(from, outDegree.getOrDefault(from, 0) + 1);
+            inDegree.put(to, inDegree.getOrDefault(to, 0) + 1);
+        }));
 
         while (!K.isEmpty()) {
-            State toBeRemoved = K.iterator().next();;
+            State toBeRemoved = K.iterator().next();
             for (State st : K) {
+                if (!inDegree.containsKey(st) || !outDegree.containsKey(st)) continue;
                 if (inDegree.get(st) == 1 && outDegree.get(st) == 1) {
                     toBeRemoved = st;
                     break;
@@ -175,90 +188,64 @@ public class FA {
 
             String mid = "";
             if (selfCircle.containsKey(toBeRemoved)) {
-                mid = "(" + selfCircle.get(toBeRemoved) + ")*";
+                mid = "(" + join(selfCircle.get(toBeRemoved)) + ")*";
                 selfCircle.remove(toBeRemoved);
             }
 
             for (State from : edges.keySet()) {
                 if (!edges.get(from).containsKey(toBeRemoved)) continue;
-                String before = edges.get(from).get(toBeRemoved);
-                if (isCombine(before)) before = "(" + before + ")";
+                String before = join(edges.get(from).get(toBeRemoved));
                 edges.get(from).remove(toBeRemoved);
                 outDegree.put(from, outDegree.get(from) - 1);
                 for (State to : edges.get(toBeRemoved).keySet()) {
                     inDegree.put(to, inDegree.get(to) - 1);
-                    String after = edges.get(toBeRemoved).get(to);
-                    if (isCombine(after)) after = "(" + after + ")";
+                    String after = join(edges.get(toBeRemoved).get(to));
                     String combine = before + mid + after;
                     if (from.equals(to)) {
-                        if (selfCircle.containsKey(from)) {
-                            if (!from.equals(combine)) {
-                                selfCircle.put(from, selfCircle.get(from) + "|" + combine);
-                            }
-                        } else {
-                            selfCircle.put(from, combine);
+                        if (!selfCircle.containsKey(from)) {
+                            selfCircle.put(from, new HashSet<>());
                         }
+                        selfCircle.get(from).add(combine);
                     } else {
-                        if (edges.get(from).containsKey(to)) {
-                            if (!edges.get(from).get(to).equals(combine)) {
-                                edges.get(from).put(to, edges.get(from).get(to) + "|" + combine);
-                            }
-                        } else {
-                            edges.get(from).put(to, combine);
+                        if (!edges.get(from).containsKey(to)) {
+                            edges.get(from).put(to, new HashSet<>());
                             outDegree.put(from, outDegree.get(from) + 1);
                             inDegree.put(to, inDegree.get(to) + 1);
                         }
+                        edges.get(from).get(to).add(combine);
                     }
                 }
             }
             edges.remove(toBeRemoved);
         }
 
-        regEx = edges.get(newS).get(newF);
+        regEx = join(edges.get(newS).get(newF));
         gen = true;
         return regEx;
     }
 
-    private boolean isCombine(String str) {
-        int cnt = 0;
-        for (char ch : str.toCharArray()) {
-            if (cnt > 0) {
-                if (ch == ')') {
-                    --cnt;
-                } else if (ch == '(') {
-                    ++cnt;
-                }
-            } else {
-                if (ch == '(') {
-                    ++cnt;
-                } else {
-                    if (ch == '|') {
-                        return true;
-                    }
-                }
-            }
+    private String join(Set<String> paths) {
+        if (paths.size() > 1) {
+            return "(" + StringUtils.join(paths, "|") + ")";
+        } else {
+            return paths.iterator().next();
         }
-        return false;
     }
 
-    private Map<State, Map<String, Set<State>>> genReverseMap(Map<State, Map<State, String>> e) {
-        this.e = e;
+    private Map<State, Map<String, Set<State>>> genReverseMap(Map<State, Map<State, Set<String>>> e) {
         Map<State, Map<String, Set<State>>> res = new HashMap<>();
 
-        for (Map.Entry<State, Map<State, String>> entry : e.entrySet()) {
-            State from = entry.getKey();
-            for (Map.Entry<State, String> innerEntry : (entry.getValue()).entrySet()) {
-                State to = innerEntry.getKey();
-                String edge = innerEntry.getValue();
-                if (!res.containsKey(to)) {
-                    res.put(to, new HashMap<>());
-                }
-                if (!res.get(to).containsKey(edge)) {
-                    res.get(to).put(edge, new HashSet<>());
-                }
-                res.get(to).get(edge).add(from);
+        e.forEach((from, value) -> value.forEach((to, paths) -> {
+            if (!res.containsKey(to)) {
+                res.put(to, new HashMap<>());
             }
-        }
+            for (String path : paths) {
+                if (!res.get(to).containsKey(path)) {
+                    res.get(to).put(path, new HashSet<>());
+                }
+                res.get(to).get(path).add(from);
+            }
+        }));
 
         return res;
     }
